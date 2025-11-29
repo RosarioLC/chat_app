@@ -24,16 +24,6 @@ make -j
 ./build/server                 # tab 1
 ./build/client                 # tab 2, 3, …
 ```
-Type away—every line is broadcast to all connected clients.
-
-## Repo Map
-```
-include/          public headers (protocol.hpp, client.hpp, server.hpp)
-src/              implementation files
-tests/            manual test scripts (4-KB line, valgrind, leak-check)
-docs/             design notes and stage road-map
-Makefile          builds `client` and `server` binaries in `build/`
-```
 
 ## Protocol v0 (stable)
 ```
