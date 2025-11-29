@@ -51,12 +51,6 @@ Type `1` = text. All fields little-endian.
 - [ ] Stage 9  – file transfer  
 - [ ] Stage 10 – double-ratchet forward secrecy
 
-## Hacking
-Pull requests **must**:
-1. Add no new dependencies  
-2. Keep single-threaded core (threads only for worker pools later)  
-3. Pass `make clean all test` (builds + runs 4-KB frame test + valgrind)
-
 ## Licence
 MIT – do what you want, blame no one.
 ```
