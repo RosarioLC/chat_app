@@ -12,6 +12,3 @@ Stage 8  Terminal UI with ncurses (tabs, contact list, scrollback)
 Stage 9  File transfer inside binary protocol (chunked, encrypted)  
 Stage 10 Signal-style double-ratchet for forward secrecy
 ```
-4. Tag the repo `git tag stage3-complete -m "binary protocol relay working"`; push tags.
-
-Copy these files in, commit, push, and you have a **professional-looking repo** that mirrors your actual learning path—and makes Stage 4 (auth) a natural next PR.
