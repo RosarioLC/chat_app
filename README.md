@@ -1,6 +1,3 @@
-Below is a drop-in skeleton you can copy-paste into your repo **right now**.  
-It gives future contributors (and recruiters) a crystal-clear picture of what the code does, how to build it, and where it’s heading—without leaking big chunks of source.
-
 -------------------------------------------------
 README.md  (top-level)
 -------------------------------------------------
