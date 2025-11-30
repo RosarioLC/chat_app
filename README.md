@@ -15,11 +15,11 @@ Everything is engineered step-by-step; each commit is a milestone you can `git c
 
 ## Build & Run
 ```bash
-git clone https://github.com/YOU/chat-cli.git
-cd chat-cli
+git clone https://github.com/RosarioLC/chat_app.git
+cd chat_app
 make -j
-./build/server                 # tab 1
-./build/client                 # tab 2, 3, …
+./server                 # tab 1
+./client                 # tab 2, 3, …
 ```
 
 ## Protocol v0 (stable)
