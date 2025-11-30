@@ -30,7 +30,6 @@ make -j
 Type `1` = text. All fields little-endian.
 
 ## Road-Map (check `docs/ROADMAP.md` for detail)
-- [ ] Stage 4  – user registration / login with SQLite & bcrypt  
 - [ ] Stage 5  – ECDH key exchange, end-to-end encryption  
 - [ ] Stage 6  – offline message store  
 - [ ] Stage 7  – group chats  
