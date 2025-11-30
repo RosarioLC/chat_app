@@ -1,28 +1,27 @@
 #pragma once
-#ifndef SERVER_HPP
-#define SERVER_HPP
-
+#include "database.hpp"
 #include "protocol.hpp"
-#include <iostream>
+#include <string>
 #include <vector>
+enum class ChatState { HANDSHAKE, CHATTING };
 
 struct Client {
   int fd;
-  std::string buffer;
+  int user_id = 0;
+  ChatState state = ChatState::HANDSHAKE;
+  std::string buffer = "";
+  Header pending_header = {};
+  bool hdr_ready = false;
 };
-
 class Server {
-private:
   int server_socket;
+  Database* database;
   std::vector<Client> clients;
-
-  void broadcast_message(Header header, std::vector<uint8_t> payload);
-
-  std::string receive_message();
-
+  void broadcast_message(const Message& m);
+  bool assemble_frame(Client& c, Message& out); // non-blocking re-assembly
+  void handshake_step(Client& c);               //
+  // text-mode REG/LOGIN
 public:
   Server();
   void run();
 };
-
-#endif // SERVER_HPP

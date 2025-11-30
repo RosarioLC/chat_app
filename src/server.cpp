@@ -1,125 +1,228 @@
 #include "server.hpp"
+#include "../include/util.hpp"
 #include <cstring>
 #include <fcntl.h>
+#include <iostream>
 #include <netinet/in.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-void Server::broadcast_message(Header header, std::vector<uint8_t> payload) {
+/* ============================================================
+ *                         Helpers
+ * ============================================================ */
+
+static std::string read_line(int socket, std::string& accumulator) {
+  char ch;
+  while (read_exact(socket, &ch, 1)) {
+    accumulator += ch;
+    if (ch == '\n') {
+      std::string out = accumulator;
+      accumulator.clear();
+      return out;
+    }
+  }
+  return {};
+}
+
+static void send_line(int socket, const std::string& line) {
+  send(socket, line.data(), line.size(), MSG_NOSIGNAL);
+}
+
+/* ============================================================
+ *                  Broadcast Frames to Clients
+ * ============================================================ */
+
+void Server::broadcast_message(const Message& message) {
   for (auto& client : clients) {
-    send(client.fd, &header, sizeof(header), MSG_NOSIGNAL);
-    send(client.fd, payload.data(), header.length, MSG_NOSIGNAL);
-  }
-}
-
-std::string Server::receive_message() {
-  if (clients.empty()) {
-    return "";
-  }
-
-  std::vector<pollfd> fds(clients.size());
-  for (size_t i = 0; i < clients.size(); i++) {
-    fds[i].fd = clients[i].fd;
-    fds[i].events = POLLIN;
-    fds[i].revents = 0;
-  }
-
-  int ret = poll(fds.data(), fds.size(), 10);
-  if (ret <= 0) {
-    return "";
-  }
-
-  for (size_t i = 0; i < fds.size(); i++) {
-    if (!fds[i].revents & POLLIN) {
+    if (client.fd == -1)
       continue;
+
+    send(client.fd, &message.header, sizeof(message.header), MSG_NOSIGNAL);
+    send(client.fd, message.payload.data(), message.header.length, MSG_NOSIGNAL);
+  }
+}
+
+/* ============================================================
+ *                   Frame Assembly (Non-blocking)
+ * ============================================================ */
+
+bool Server::assemble_frame(Client& client, Message& output) {
+  output = Message{};
+
+  // 1. Read header if needed
+  if (!client.hdr_ready) {
+    size_t needed = sizeof(Header) - client.buffer.size();
+
+    if (needed) {
+      char tmp[needed];
+      ssize_t n = recv(client.fd, tmp, needed, 0);
+
+      if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+        return false;
+
+      if (n <= 0) {
+        close(client.fd);
+        client.fd = -1;
+        return false;
+      }
+
+      client.buffer.insert(client.buffer.end(), tmp, tmp + n);
+
+      if (client.buffer.size() < sizeof(Header))
+        return false;
     }
 
-    char temp[16 * 1024];
+    std::memcpy(&client.pending_header, client.buffer.data(), sizeof(Header));
+    client.buffer.erase(client.buffer.begin(), client.buffer.begin() + sizeof(Header));
+    client.hdr_ready = true;
+  }
 
-    Header header;
-    if (!read_exact(clients[i].fd, &header, sizeof(Header))) {
-      break;
+  // 2. Read payload if needed
+  size_t payload_size = client.pending_header.length;
+
+  if (client.buffer.size() < payload_size) {
+    size_t needed = payload_size - client.buffer.size();
+    char tmp[needed];
+
+    ssize_t n = recv(client.fd, tmp, needed, 0);
+
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+      return false;
+
+    if (n <= 0) {
+      close(client.fd);
+      client.fd = -1;
+      return false;
     }
 
-    if (header.length > sizeof(temp)) {
-      std::cerr << "Message too large" << std::endl;
-      break;
-    }
+    client.buffer.insert(client.buffer.end(), tmp, tmp + n);
+  }
 
-    if (!read_exact(clients[i].fd, temp, header.length)) {
-      break;
+  if (client.buffer.size() == payload_size) {
+    output.header = client.pending_header;
+    output.payload = {client.buffer.begin(), client.buffer.begin() + payload_size};
+
+    output.valid = true;
+    client.buffer.clear();
+    client.hdr_ready = false;
+    return true;
+  }
+
+  return false;
+}
+
+/* ============================================================
+ *                       Handshake Logic
+ * ============================================================ */
+
+void Server::handshake_step(Client& client) {
+  std::string line = read_line(client.fd, client.buffer);
+
+  if (line.empty()) {
+    close(client.fd);
+    client.fd = -1;
+    return;
+  }
+
+  // Wait for newline
+  if (!ends_with(line, "\n"))
+    return;
+
+  if (starts_with(line, "REG ")) {
+    std::string username = line.substr(4, line.find('\n', 4) - 4);
+    std::string hash = read_line(client.fd, client.buffer);
+
+    if (hash.empty())
+      return;
+
+    database->add_user(username, hash);
+    client.user_id = database->fetch_user_id(username);
+
+    send_line(client.fd, "OK " + std::to_string(client.user_id) + "\n");
+    fcntl(client.fd, F_SETFL, O_NONBLOCK);
+    client.state = ChatState::CHATTING;
+
+    std::cout << "User registered: " << username << " id=" << client.user_id << '\n';
+  } else if (starts_with(line, "LOGIN ")) {
+    std::string username = line.substr(6, line.find('\n', 6) - 6);
+    std::string hash = read_line(client.fd, client.buffer);
+
+    if (hash.empty())
+      return;
+
+    client.user_id = database->check_user(username, hash);
+
+    if (client.user_id) {
+      send_line(client.fd, "OK " + std::to_string(client.user_id) + "\n");
+      fcntl(client.fd, F_SETFL, O_NONBLOCK);
+      client.state = ChatState::CHATTING;
+
+      std::cout << "User logged in: " << username << " id=" << client.user_id << '\n';
+    } else {
+      send_line(client.fd, "ERR auth_fail\n");
     }
   }
-  return "";
 }
+
+/* ============================================================
+ *                           Constructor
+ * ============================================================ */
 
 Server::Server() {
   server_socket = socket(AF_INET, SOCK_STREAM, 0);
   check(server_socket, "socket");
 
-  sockaddr_in server_address;
-  server_address.sin_family = AF_INET;
-  server_address.sin_port = htons(6969);
-  server_address.sin_addr.s_addr = INADDR_ANY;
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(6969);
+  addr.sin_addr.s_addr = INADDR_ANY;
 
   int opt = 1;
   check(setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)), "setsockopt");
 
-  check(bind(server_socket, (struct sockaddr*)&server_address, sizeof(server_address)), "bind");
+  check(bind(server_socket, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)), "bind");
 
   check(listen(server_socket, 1), "listen");
+
+  database = new Database("./db/database.db");
 }
 
+/* ============================================================
+ *                          Main Loop
+ * ============================================================ */
+
 void Server::run() {
-  while (1) {
-    pollfd listen_fd{server_socket, POLLIN, 0};
-    if (poll(&listen_fd, 1, 0) > 0) {
+  while (true) {
+    // Accept new connections
+    pollfd listener{server_socket, POLLIN, 0};
+    if (poll(&listener, 1, 0) > 0) {
       int cli = accept(server_socket, nullptr, nullptr);
       if (cli >= 0) {
         fcntl(cli, F_SETFL, O_NONBLOCK);
-        clients.emplace_back(Client{cli, {}});
-        std::cout << "client connected\n";
+        clients.emplace_back(Client{cli});
+        std::cout << "Client connected\n";
       }
     }
 
-    if (clients.empty()) {
-      continue;
-    }
-
-    std::vector<pollfd> fds(clients.size());
-    for (size_t i = 0; i < clients.size(); i++) {
-      fds[i].fd = clients[i].fd;
-      fds[i].events = POLLIN;
-    }
-
-    int ret = poll(fds.data(), fds.size(), 10);
-    if (ret <= 0)
-      continue;
-
-    for (size_t i = 0; i < fds.size(); i++) {
-      if (!(fds[i].revents & POLLIN))
+    // Handle clients
+    for (auto& client : clients) {
+      if (client.fd == -1)
         continue;
 
-      Header header;
-      if (!read_exact(clients[i].fd, &header, sizeof(header))) {
-        close(clients[i].fd);
-        clients.erase(clients.begin() + i);
-      }
+      pollfd p{client.fd, POLLIN, 0};
+      if (poll(&p, 1, 0) <= 0)
+        continue;
 
-      if (header.length > 16 * 1024) {
-        std::cerr << "Frame too big.\n";
-        close(clients[i].fd);
-        clients.erase(clients.begin() + i);
+      if (client.state == ChatState::HANDSHAKE) {
+        handshake_step(client);
+      } else {
+        Message message;
+        if (assemble_frame(client, message)) {
+          message.header.sender = client.user_id;
+          broadcast_message(message);
+        }
       }
-
-      std::vector<uint8_t> payload(header.length);
-      if (!read_exact(clients[i].fd, payload.data(), header.length)) {
-        close(clients[i].fd);
-        clients.erase(clients.begin() + i);
-      }
-
-      broadcast_message(header, payload);
     }
   }
 }

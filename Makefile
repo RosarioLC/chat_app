@@ -3,11 +3,11 @@ CXXFLAGS = -Wall -Wextra -std=c++17 -I include
 BUILD    = build
 SRC      = $(wildcard src/*.cpp)
 
-server: $(BUILD)/server_main.o $(BUILD)/server.o $(BUILD)/protocol.o
-	$(CXX) $^ -o $@
+server: $(BUILD)/server_main.o $(BUILD)/database.o $(BUILD)/server.o $(BUILD)/bcrypt.o $(BUILD)/protocol.o
+	$(CXX) $^ -o $@ -lsqlite3 -lbcrypt
 
-client: $(BUILD)/client_main.o $(BUILD)/client.o $(BUILD)/protocol.o
-	$(CXX) $^ -o $@
+client: $(BUILD)/client_main.o $(BUILD)/bcrypt.o $(BUILD)/client.o $(BUILD)/protocol.o
+	$(CXX) $^ -o $@ -lbcrypt
 
 $(BUILD)/%.o: src/%.cpp | $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@

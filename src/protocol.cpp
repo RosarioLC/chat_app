@@ -1,11 +1,11 @@
 #include "../include/protocol.hpp"
 #include <cerrno>
+#include <cstring>
 #include <iostream>
 #include <time.h>
 #include <unistd.h>
 
-std::vector<uint8_t> build_frame(uint16_t type, uint16_t sender, const void* payload,
-                                 uint32_t pay_len) {
+std::vector<uint8_t> build_frame(uint16_t type, uint16_t sender, const void* payload, uint32_t pay_len) {
   Header header;
   header.length = pay_len;
   header.sender = sender;
@@ -32,12 +32,10 @@ bool read_exact(int fd, void* dst, size_t n) {
     ssize_t bytes = read(fd, buf + total, n - total);
 
     if (bytes == 0) {
-      // EOF → connection closed cleanly
       return false;
     }
 
     if (bytes < 0) {
-      // If the read was interrupted, retry
       if (errno == EINTR)
         continue;
       return false;
@@ -47,12 +45,4 @@ bool read_exact(int fd, void* dst, size_t n) {
   }
 
   return true;
-}
-
-int check(int result, const char* funcname) {
-  if (result < 0) {
-    perror(funcname);
-    return -1;
-  }
-  return 0;
 }
