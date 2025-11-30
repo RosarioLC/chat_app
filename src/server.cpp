@@ -154,7 +154,6 @@ void Server::handshake_step(Client& client) {
       return;
 
     client.user_id = database->check_user(username, password);
-    std::cout << "returned " << client.user_id << std::endl;
 
     if (client.user_id) {
       send_line(client.fd, "OK " + std::to_string(client.user_id) + "\n");
