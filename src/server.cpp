@@ -1,4 +1,5 @@
 #include "server.hpp"
+#include "../include/bcrypt.hpp"
 #include "../include/util.hpp"
 #include <cstring>
 #include <fcntl.h>
@@ -131,12 +132,13 @@ void Server::handshake_step(Client& client) {
 
   if (starts_with(line, "REG ")) {
     std::string username = line.substr(4, line.find('\n', 4) - 4);
-    std::string hash = read_line(client.fd, client.buffer);
+    std::string password = read_line(client.fd, client.buffer);
 
-    if (hash.empty())
+    if (password.empty()) {
       return;
+    }
 
-    database->add_user(username, hash);
+    database->add_user(username, bcrypt_hash(password));
     client.user_id = database->fetch_user_id(username);
 
     send_line(client.fd, "OK " + std::to_string(client.user_id) + "\n");
@@ -146,12 +148,13 @@ void Server::handshake_step(Client& client) {
     std::cout << "User registered: " << username << " id=" << client.user_id << '\n';
   } else if (starts_with(line, "LOGIN ")) {
     std::string username = line.substr(6, line.find('\n', 6) - 6);
-    std::string hash = read_line(client.fd, client.buffer);
+    std::string password = read_line(client.fd, client.buffer);
 
-    if (hash.empty())
+    if (password.empty())
       return;
 
-    client.user_id = database->check_user(username, hash);
+    client.user_id = database->check_user(username, password);
+    std::cout << "returned " << client.user_id << std::endl;
 
     if (client.user_id) {
       send_line(client.fd, "OK " + std::to_string(client.user_id) + "\n");

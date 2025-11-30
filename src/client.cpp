@@ -14,11 +14,11 @@
  *                         Utilities
  * ============================================================ */
 
-static void sendLine(int socket, const std::string& line) {
+static void send_line(int socket, const std::string& line) {
   send(socket, line.data(), line.size(), MSG_NOSIGNAL);
 }
 
-static std::string readLine(int socket) {
+static std::string read_line(int socket) {
   std::string line;
   char ch;
 
@@ -30,7 +30,7 @@ static std::string readLine(int socket) {
   return {}; // EOF or error
 }
 
-static bool readFromSocket(int sock, std::vector<uint8_t>& buf, size_t amount) {
+static bool read_from_socket(int sock, std::vector<uint8_t>& buf, size_t amount) {
   char tmp[4096]; // generic max buffer
   while (buf.size() < amount) {
     size_t remaining = amount - buf.size();
@@ -86,24 +86,22 @@ static int authenticate(int sock) {
       std::cout << "password: ";
       std::getline(std::cin, password);
 
-      hash = bcrypt_hash(password);
-      sendLine(sock, "REG " + username + "\n");
-      sendLine(sock, hash + "\n");
+      send_line(sock, "REG " + username + "\n");
+      send_line(sock, password + "\n");
     } else if (starts_with(command, "/login ")) {
       username = command.substr(7);
 
       std::cout << "password: ";
       std::getline(std::cin, password);
 
-      hash = bcrypt_hash(password);
-      sendLine(sock, "LOGIN " + username + "\n");
-      sendLine(sock, hash + "\n");
+      send_line(sock, "LOGIN " + username + "\n");
+      send_line(sock, password + "\n");
     } else {
       std::cout << "Unknown command\n";
       continue;
     }
 
-    std::string reply = readLine(sock);
+    std::string reply = read_line(sock);
     if (reply.empty()) {
       std::cout << "Server closed\n";
       return 0;
@@ -152,7 +150,7 @@ void Client::run() {
         receiver.buffer.clear();
         receiver.buffer.reserve(sizeof(Header));
 
-        if (!readFromSocket(client_socket, receiver.buffer, sizeof(Header)))
+        if (!read_from_socket(client_socket, receiver.buffer, sizeof(Header)))
           return;
 
         std::memcpy(&receiver.header, receiver.buffer.data(), sizeof(Header));
@@ -163,7 +161,7 @@ void Client::run() {
       }
 
       // Step 2: Payload
-      if (!readFromSocket(client_socket, receiver.buffer, receiver.header.length)) {
+      if (!read_from_socket(client_socket, receiver.buffer, receiver.header.length)) {
         return;
       }
 

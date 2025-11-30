@@ -1,0 +1,27 @@
+# Build artefacts
+build/
+*.o
+*.a
+*.so
+client
+server
+
+# Database & runtime
+db/*.db
+*.db-journal
+
+# IDE / editor droppings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Compiled tests
+tests/test_4kb
+test_4kb
+
+# Local env
+.env
+*.log

@@ -20,7 +20,7 @@ public:
 
   void add_user(const std::string& username, const std::string& password_hash);
 
-  int check_user(const std::string& udername, const std::string& password_hash);
+  int check_user(const std::string& udername, const std::string& password);
 
   void remove_user(int id);
   void remove_user(const std::string& username);

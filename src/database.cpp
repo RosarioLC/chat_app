@@ -82,7 +82,7 @@ void Database::add_user(const std::string& username, const std::string& password
   sqlite3_finalize(stmt);
 }
 
-int Database::check_user(const std::string& username, const std::string& password_hash) {
+int Database::check_user(const std::string& username, const std::string& password) {
   sqlite3_stmt* stmt = prepare("SELECT id, password_hash FROM Users WHERE username = ?");
   if (!stmt) {
     return 0;
@@ -94,7 +94,7 @@ int Database::check_user(const std::string& username, const std::string& passwor
   if (sqlite3_step(stmt) == SQLITE_ROW) {
     user_id = sqlite3_column_int(stmt, 0);
     const char* stored_hash = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-    if (!bcrypt_check(password_hash, stored_hash)) {
+    if (!bcrypt_check(password, stored_hash)) {
       user_id = 0;
     }
   }
