@@ -10,10 +10,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-/* ============================================================
- *                         Utilities
- * ============================================================ */
-
 static void send_line(int socket, const std::string& line) {
   send(socket, line.data(), line.size(), MSG_NOSIGNAL);
 }
@@ -27,11 +23,11 @@ static std::string read_line(int socket) {
     if (ch == '\n')
       return line;
   }
-  return {}; // EOF or error
+  return {};
 }
 
 static bool read_from_socket(int sock, std::vector<uint8_t>& buf, size_t amount) {
-  char tmp[4096]; // generic max buffer
+  char tmp[4096];
   while (buf.size() < amount) {
     size_t remaining = amount - buf.size();
     size_t toRead = std::min(remaining, sizeof(tmp));

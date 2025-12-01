@@ -6,7 +6,7 @@ SRC      = $(wildcard src/*.cpp)
 all: server client
 
 server: $(BUILD)/server_main.o $(BUILD)/database.o $(BUILD)/server.o $(BUILD)/bcrypt.o $(BUILD)/protocol.o
-	$(CXX) $^ -o $@ -lsqlite3 -lbcrypt
+	$(CXX) $^ -o $@ -lsqlite3 -lbcrypt -lcrypto
 
 client: $(BUILD)/client_main.o $(BUILD)/bcrypt.o $(BUILD)/client.o $(BUILD)/protocol.o
 	$(CXX) $^ -o $@ -lbcrypt
@@ -14,10 +14,11 @@ client: $(BUILD)/client_main.o $(BUILD)/bcrypt.o $(BUILD)/client.o $(BUILD)/prot
 $(BUILD)/%.o: src/%.cpp | $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+
 $(BUILD):
 	mkdir -p $@
 
 clean:
-	rm -rf build client server
+	rm -rf build client server test_runner
 
 .PHONY: clean all

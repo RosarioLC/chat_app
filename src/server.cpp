@@ -1,17 +1,15 @@
 #include "server.hpp"
 #include "../include/bcrypt.hpp"
 #include "../include/util.hpp"
+#include <chrono>
 #include <cstring>
 #include <fcntl.h>
 #include <iostream>
 #include <netinet/in.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
+#include <thread>
 #include <unistd.h>
-
-/* ============================================================
- *                         Helpers
- * ============================================================ */
 
 static std::string read_line(int socket, std::string& accumulator) {
   char ch;
@@ -30,10 +28,6 @@ static void send_line(int socket, const std::string& line) {
   send(socket, line.data(), line.size(), MSG_NOSIGNAL);
 }
 
-/* ============================================================
- *                  Broadcast Frames to Clients
- * ============================================================ */
-
 void Server::broadcast_message(const Message& message) {
   for (auto& client : clients) {
     if (client.fd == -1)
@@ -44,14 +38,9 @@ void Server::broadcast_message(const Message& message) {
   }
 }
 
-/* ============================================================
- *                   Frame Assembly (Non-blocking)
- * ============================================================ */
-
 bool Server::assemble_frame(Client& client, Message& output) {
   output = Message{};
 
-  // 1. Read header if needed
   if (!client.hdr_ready) {
     size_t needed = sizeof(Header) - client.buffer.size();
 
@@ -79,7 +68,6 @@ bool Server::assemble_frame(Client& client, Message& output) {
     client.hdr_ready = true;
   }
 
-  // 2. Read payload if needed
   size_t payload_size = client.pending_header.length;
 
   if (client.buffer.size() < payload_size) {
@@ -113,10 +101,6 @@ bool Server::assemble_frame(Client& client, Message& output) {
   return false;
 }
 
-/* ============================================================
- *                       Handshake Logic
- * ============================================================ */
-
 void Server::handshake_step(Client& client) {
   std::string line = read_line(client.fd, client.buffer);
 
@@ -126,7 +110,6 @@ void Server::handshake_step(Client& client) {
     return;
   }
 
-  // Wait for newline
   if (!ends_with(line, "\n"))
     return;
 
@@ -142,6 +125,13 @@ void Server::handshake_step(Client& client) {
     client.user_id = database->fetch_user_id(username);
 
     send_line(client.fd, "OK " + std::to_string(client.user_id) + "\n");
+    Message key_message;
+    key_message.header = {32, 2, 0, (uint32_t)time(nullptr)};
+    key_message.payload = database->fetch_public_key(client.user_id);
+
+    send(client.fd, &key_message.header, sizeof(key_message.header), MSG_NOSIGNAL);
+    send(client.fd, key_message.payload.data(), key_message.header.length, MSG_NOSIGNAL);
+
     fcntl(client.fd, F_SETFL, O_NONBLOCK);
     client.state = ChatState::CHATTING;
 
@@ -157,6 +147,13 @@ void Server::handshake_step(Client& client) {
 
     if (client.user_id) {
       send_line(client.fd, "OK " + std::to_string(client.user_id) + "\n");
+
+      Message key_message;
+      key_message.header = {32, 2, 0, (uint32_t)time(nullptr)};
+      key_message.payload = database->fetch_public_key(client.user_id);
+      send(client.fd, &key_message.header, sizeof(key_message.header), MSG_NOSIGNAL);
+      send(client.fd, key_message.payload.data(), key_message.header.length, MSG_NOSIGNAL);
+
       fcntl(client.fd, F_SETFL, O_NONBLOCK);
       client.state = ChatState::CHATTING;
 
@@ -167,17 +164,13 @@ void Server::handshake_step(Client& client) {
   }
 }
 
-/* ============================================================
- *                           Constructor
- * ============================================================ */
-
-Server::Server() {
+Server::Server(uint16_t port) : listen_port(port) {
   server_socket = socket(AF_INET, SOCK_STREAM, 0);
   check(server_socket, "socket");
 
   sockaddr_in addr{};
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(6969);
+  addr.sin_port = htons(listen_port);
   addr.sin_addr.s_addr = INADDR_ANY;
 
   int opt = 1;
@@ -190,13 +183,9 @@ Server::Server() {
   database = new Database("./db/database.db");
 }
 
-/* ============================================================
- *                          Main Loop
- * ============================================================ */
-
 void Server::run() {
-  while (true) {
-    // Accept new connections
+  while (running.load()) {
+
     pollfd listener{server_socket, POLLIN, 0};
     if (poll(&listener, 1, 0) > 0) {
       int cli = accept(server_socket, nullptr, nullptr);
@@ -207,7 +196,6 @@ void Server::run() {
       }
     }
 
-    // Handle clients
     for (auto& client : clients) {
       if (client.fd == -1)
         continue;
@@ -226,5 +214,21 @@ void Server::run() {
         }
       }
     }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
+}
+
+void Server::stop() {
+  running.store(false);
+}
+
+Server::~Server() {
+  running.store(false);
+  close(server_socket);
+  for (auto& c : clients) {
+    if (c.fd != -1)
+      close(c.fd);
+  }
+  delete database;
 }
