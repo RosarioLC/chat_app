@@ -1,25 +1,6 @@
 #include "../include/database.hpp"
-#include "../include/bcrypt.hpp"
+#include "../include/crypto.hpp"
 #include <iostream>
-#include <openssl/evp.h>
-
-static void generate_keypair(std::vector<uint8_t>& pub, std::vector<uint8_t>& priv) {
-  EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_X25519, nullptr);
-  EVP_PKEY_keygen_init(ctx);
-  EVP_PKEY* pkey = nullptr;
-  EVP_PKEY_keygen(ctx, &pkey);
-  EVP_PKEY_CTX_free(ctx);
-
-  size_t pub_len = 32;
-  size_t priv_len = 32;
-
-  pub.resize(pub_len);
-  priv.resize(priv_len);
-
-  EVP_PKEY_get_raw_public_key(pkey, pub.data(), &pub_len);
-  EVP_PKEY_get_raw_private_key(pkey, priv.data(), &priv_len);
-  EVP_PKEY_free(pkey);
-}
 
 Database::Database(const std::string& db_path) : db(nullptr), db_path(db_path) {
   if (sqlite3_open(db_path.c_str(), &db) != SQLITE_OK) {
@@ -50,6 +31,18 @@ sqlite3_stmt* Database::prepare(const char* sql) {
   return stmt;
 }
 
+static inline bool exec_sql(sqlite3* db, const char* sql) {
+  char* err = nullptr;
+  if (sqlite3_exec(db, sql, nullptr, nullptr, &err) != SQLITE_OK) {
+    if (err) {
+      std::cerr << err << std::endl;
+      sqlite3_free(err);
+    }
+    return false;
+  }
+  return true;
+}
+
 int Database::fetch_user_id(const std::string& username) {
   auto stmt = prepare("SELECT id FROM Users WHERE username = ?");
   if (!stmt) {
@@ -65,26 +58,6 @@ int Database::fetch_user_id(const std::string& username) {
 
   sqlite3_finalize(stmt);
   return id;
-}
-
-std::string Database::fetch_user_username(int id) {
-  auto stmt = prepare("SELECT username FROM Users WHERE id = ?");
-  if (!stmt) {
-    return "";
-  }
-
-  sqlite3_bind_int(stmt, 1, id);
-
-  std::string result;
-  if (sqlite3_step(stmt) == SQLITE_ROW) {
-    auto text = sqlite3_column_text(stmt, 0);
-    if (text) {
-      result = reinterpret_cast<const char*>(text);
-    }
-  }
-
-  sqlite3_finalize(stmt);
-  return result;
 }
 
 std::vector<uint8_t> Database::fetch_public_key(int user_id) {
@@ -112,11 +85,11 @@ void Database::add_user(const std::string& username, const std::string& password
   sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
   sqlite3_bind_text(stmt, 2, password_hash.c_str(), -1, SQLITE_STATIC);
 
-  std::vector<uint8_t> pub, priv;
-  generate_keypair(pub, priv);
+  std::vector<uint8_t> pubkey, privkey;
+  generate_ephemeral_keypair(pubkey, privkey);
 
-  sqlite3_bind_blob(stmt, 3, pub.data(), pub.size(), SQLITE_STATIC);
-  sqlite3_bind_blob(stmt, 4, priv.data(), priv.size(), SQLITE_STATIC);
+  sqlite3_bind_blob(stmt, 3, pubkey.data(), pubkey.size(), SQLITE_STATIC);
+  sqlite3_bind_blob(stmt, 4, privkey.data(), privkey.size(), SQLITE_STATIC);
 
   if (sqlite3_step(stmt) != SQLITE_DONE) {
     std::cerr << "Insert failed: " << sqlite3_errmsg(db) << std::endl;
@@ -178,19 +151,13 @@ void Database::init_tables() {
   if (!db) {
     return;
   }
-  //   delete_database();
   const char* sql = "CREATE TABLE IF NOT EXISTS Users("
                     "id INTEGER PRIMARY KEY,"
                     "username TEXT UNIQUE,"
                     "pubkey BLOB,"
                     "privkey BLOB,"
                     "password_hash TEXT);";
-
-  char* err_msg = nullptr;
-  if (sqlite3_exec(db, sql, nullptr, nullptr, &err_msg) != SQLITE_OK) {
-    std::cerr << "Error creating table: " << err_msg << std::endl;
-    sqlite3_free(err_msg);
-  }
+  exec_sql(db, sql);
 }
 
 bool Database::delete_database() {
@@ -198,20 +165,12 @@ bool Database::delete_database() {
     std::cerr << "Database not open; cannot wipe." << std::endl;
     return false;
   }
-
-  char* err_msg = nullptr;
-  const char* wipe_users = "DELETE FROM Users;";
-  if (sqlite3_exec(db, wipe_users, nullptr, nullptr, &err_msg) != SQLITE_OK) {
-    std::cerr << "Error wiping Users: " << err_msg << std::endl;
-    sqlite3_free(err_msg);
+  exec_sql(db, "BEGIN TRANSACTION;");
+  if (!exec_sql(db, "DELETE FROM Users;")) {
+    exec_sql(db, "ROLLBACK;");
     return false;
   }
-
-  const char* vacuum = "VACUUM;";
-  if (sqlite3_exec(db, vacuum, nullptr, nullptr, &err_msg) != SQLITE_OK) {
-    std::cerr << "VACUUM failed: " << err_msg << std::endl;
-    sqlite3_free(err_msg);
-  }
-
+  exec_sql(db, "COMMIT;");
+  exec_sql(db, "VACUUM;");
   return true;
 }

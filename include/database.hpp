@@ -39,7 +39,6 @@ public:
   // Returns the numeric id for a `username`, or -1 if not found.
   int fetch_user_id(const std::string& username);
   // Returns the username for a numeric `id`, or empty string if not found.
-  std::string fetch_user_username(int id);
   // Returns the raw public key BLOB for a user id; empty vector if not found.
   std::vector<uint8_t> fetch_public_key(int user_id);
 

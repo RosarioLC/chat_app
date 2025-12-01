@@ -1,5 +1,5 @@
 #include "client.hpp"
-#include "../include/bcrypt.hpp"
+#include "../include/crypto.hpp"
 #include "../include/protocol.hpp"
 #include "../include/util.hpp"
 #include <cstring>
@@ -14,6 +14,24 @@ static void send_line(int socket, const std::string& line) {
   send(socket, line.data(), line.size(), MSG_NOSIGNAL);
 }
 
+static inline bool send_message(int fd, const Message& m) {
+  if (m.header.length != m.payload.size()) {
+    return false;
+  }
+  if (!validate_header(m.header)) {
+    return false;
+  }
+  if (send(fd, &m.header, sizeof(m.header), MSG_NOSIGNAL) < 0) {
+    return false;
+  }
+  if (m.header.length) {
+    if (send(fd, m.payload.data(), m.header.length, MSG_NOSIGNAL) < 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static std::string read_line(int socket) {
   std::string line;
   char ch;
@@ -24,23 +42,6 @@ static std::string read_line(int socket) {
       return line;
   }
   return {};
-}
-
-static bool read_from_socket(int sock, std::vector<uint8_t>& buf, size_t amount) {
-  char tmp[4096];
-  while (buf.size() < amount) {
-    size_t remaining = amount - buf.size();
-    size_t toRead = std::min(remaining, sizeof(tmp));
-
-    ssize_t n = recv(sock, tmp, toRead, 0);
-    if (n <= 0) {
-      if (n == 0)
-        std::cerr << "Server closed\n";
-      return false;
-    }
-    buf.insert(buf.end(), tmp, tmp + n);
-  }
-  return true;
 }
 
 /* ============================================================
@@ -119,15 +120,16 @@ static int authenticate(int sock) {
 
 void Client::run() {
   int user_id = authenticate(client_socket);
-  if (user_id == 0)
+  if (user_id == 0) {
     return;
+  }
 
   fcntl(client_socket, F_SETFL, O_NONBLOCK);
 
   struct Receiver {
     std::vector<uint8_t> buffer;
     Header header;
-    bool hasHeader = false;
+    bool has_header = false;
   } receiver;
 
   pollfd fds[2] = {{client_socket, POLLIN, 0}, {STDIN_FILENO, POLLIN, 0}};
@@ -135,51 +137,69 @@ void Client::run() {
   char input[16 * 1024];
 
   while (true) {
-    if (poll(fds, 2, -1) <= 0)
+    if (poll(fds, 2, -1) <= 0) {
+      std::cout << "poll error or timeout" << std::endl;
       break;
+    }
 
     /* ==== Incoming Network Data ==== */
     if (fds[0].revents & POLLIN) {
 
       // Step 1: Header
-      if (!receiver.hasHeader) {
+      if (!receiver.has_header) {
         receiver.buffer.clear();
         receiver.buffer.reserve(sizeof(Header));
 
-        if (!read_from_socket(client_socket, receiver.buffer, sizeof(Header)))
+        int rc = recv_n_nb(client_socket, receiver.buffer, sizeof(Header));
+        if (rc == 0)
+          continue;
+        if (rc == -1) {
+          std::cout << "Failed to read header from socket" << std::endl;
           return;
+        }
 
         std::memcpy(&receiver.header, receiver.buffer.data(), sizeof(Header));
 
         receiver.buffer.clear();
         receiver.buffer.reserve(receiver.header.length);
-        receiver.hasHeader = true;
+        receiver.has_header = true;
       }
 
       // Step 2: Payload
-      if (!read_from_socket(client_socket, receiver.buffer, receiver.header.length)) {
+      int rc2 = recv_n_nb(client_socket, receiver.buffer, receiver.header.length);
+      if (rc2 == 0)
+        continue;
+      if (rc2 == -1) {
+        std::cout << "Failed to read payload from socket" << std::endl;
         return;
       }
 
       // Full frame received
-      receiver.buffer.push_back('\0'); // for printing safely
-      std::cout << "[" << receiver.header.sender << "] " << receiver.buffer.data();
+      if (receiver.header.type == static_cast<uint16_t>(MessageType::CHAT)) {
+        receiver.buffer.push_back('\0'); // for printing safely
+        std::cout << "[" << receiver.header.sender << "] " << receiver.buffer.data();
+      } else {
+        // Non-text payload (e.g., keys). Ignore for display.
+      }
 
       // Reset state
       receiver.buffer.clear();
-      receiver.hasHeader = false;
+      receiver.has_header = false;
     }
 
     /* ==== Outgoing User Input ==== */
     if (fds[1].revents & POLLIN) {
-      if (!fgets(input, sizeof(input), stdin))
+      if (!fgets(input, sizeof(input), stdin)) {
+        std::cout << "Failed to read input" << std::endl;
         return;
+      }
 
       std::string line = input;
-      auto frame = build_frame(1, // Message type/channel
-                               user_id, line.data(), line.size());
-
-      send(client_socket, frame.data(), frame.size(), MSG_NOSIGNAL);
+      Message m = build_message(static_cast<uint16_t>(MessageType::CHAT), user_id, line.data(), line.size());
+      if (!send_message(client_socket, m)) {
+        std::cout << "Failed to send message" << std::endl;
+        return;
+      }
     }
   }
 }

@@ -12,7 +12,6 @@
 #pragma once
 #include "database.hpp"
 #include "protocol.hpp"
-#include <atomic>
 #include <string>
 #include <vector>
 // Client connection state.
@@ -27,15 +26,16 @@ struct Client {
   int fd;
   int user_id = 0;
   ChatState state = ChatState::HANDSHAKE;
-  std::string buffer = "";
+  std::vector<uint8_t> buffer = {};
   Header pending_header = {};
   bool hdr_ready = false;
+  std::vector<uint8_t> ephemeral_priv = {};
 };
 class Server {
   int server_socket;
   Database* database;
   std::vector<Client> clients;
-  std::atomic<bool> running{true};
+  bool running = true;
   uint16_t listen_port;
   // Send a message to all connected clients.
   void broadcast_message(const Message& m);
@@ -45,6 +45,14 @@ class Server {
   // Registration/login handshake.
   // Drives the flow to move a client from HANDSHAKE to CHATTING.
   void handshake_step(Client& c);
+  // Handle I/O and state for a single connected client.
+  void handle_client(Client& c);
+  // Accept any pending inbound connections.
+  void accept_new_connections();
+  // Send user's public key to a socket as a KEY frame.
+  void send_user_pubkey(int fd, int user_id);
+  // Common success path for registration/login.
+  void finish_auth(Client& c, const std::string& username, const char* action);
 
 public:
   // Bind/listen on `port` and initialize database.
