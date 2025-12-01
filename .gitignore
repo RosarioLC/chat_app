@@ -25,3 +25,5 @@ test_4kb
 # Local env
 .env
 *.log
+
+.clang-format
