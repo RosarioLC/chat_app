@@ -9,6 +9,7 @@
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <vector>
 
 static void send_line(int socket, const std::string& line) {
   send(socket, line.data(), line.size(), MSG_NOSIGNAL);
@@ -59,6 +60,9 @@ Client::Client() {
 
   check(connect(client_socket, reinterpret_cast<sockaddr*>(&serverAddr), sizeof(serverAddr)), "connect");
 
+  // Generate long-term keypair for E2EE
+  generate_ephemeral_keypair(my_public_key, my_private_key);
+
   std::cout << "Connected to server.\n";
 }
 
@@ -66,7 +70,7 @@ Client::Client() {
  *                        Login Phase
  * ============================================================ */
 
-static int authenticate(int sock) {
+int Client::authenticate() {
   std::cout << "Commands: /register <user>  or  /login <user>\n";
   std::string command;
 
@@ -75,7 +79,7 @@ static int authenticate(int sock) {
     if (!std::getline(std::cin, command))
       return 0;
 
-    std::string username, password, hash;
+    std::string username, password;
 
     if (starts_with(command, "/register ")) {
       username = command.substr(10);
@@ -83,22 +87,40 @@ static int authenticate(int sock) {
       std::cout << "password: ";
       std::getline(std::cin, password);
 
-      send_line(sock, "REG " + username + "\n");
-      send_line(sock, password + "\n");
+      send_line(client_socket, "REG " + username + "\n");
+      send_line(client_socket, password + "\n");
+
+      // Send public key as hex
+      std::string pubkey_hex;
+      for (uint8_t byte : my_public_key) {
+        char buf[3];
+        snprintf(buf, sizeof(buf), "%02x", byte);
+        pubkey_hex += buf;
+      }
+      send_line(client_socket, pubkey_hex + "\n");
     } else if (starts_with(command, "/login ")) {
       username = command.substr(7);
 
       std::cout << "password: ";
       std::getline(std::cin, password);
 
-      send_line(sock, "LOGIN " + username + "\n");
-      send_line(sock, password + "\n");
+      send_line(client_socket, "LOGIN " + username + "\n");
+      send_line(client_socket, password + "\n");
+
+      // Send current session's public key
+      std::string pubkey_hex;
+      for (uint8_t byte : my_public_key) {
+        char buf[3];
+        snprintf(buf, sizeof(buf), "%02x", byte);
+        pubkey_hex += buf;
+      }
+      send_line(client_socket, pubkey_hex + "\n");
     } else {
       std::cout << "Unknown command\n";
       continue;
     }
 
-    std::string reply = read_line(sock);
+    std::string reply = read_line(client_socket);
     if (reply.empty()) {
       std::cout << "Server closed\n";
       return 0;
@@ -112,14 +134,12 @@ static int authenticate(int sock) {
       return id;
     }
   }
-}
-
-/* ============================================================
- *                        Main Loop
- * ============================================================ */
+} /* ============================================================
+   *                        Main Loop
+   * ============================================================ */
 
 void Client::run() {
-  int user_id = authenticate(client_socket);
+  int user_id = authenticate();
   if (user_id == 0) {
     return;
   }
@@ -176,10 +196,29 @@ void Client::run() {
 
       // Full frame received
       if (receiver.header.type == static_cast<uint16_t>(MessageType::CHAT)) {
-        receiver.buffer.push_back('\0'); // for printing safely
-        std::cout << "[" << receiver.header.sender << "] " << receiver.buffer.data();
-      } else {
-        // Non-text payload (e.g., keys). Ignore for display.
+        int sender_id = receiver.header.sender;
+
+        // Look up sender's public key
+        auto it = peer_public_keys.find(sender_id);
+        if (it == peer_public_keys.end()) {
+          std::cerr << "No public key for sender " << sender_id << "\n";
+        } else {
+          // Decrypt using ECDH(my_private, sender_public)
+          std::vector<uint8_t> shared = ecdh_shared_secret(my_private_key, it->second);
+          CryptoKeys keys = derive_aes_keys(shared);
+
+          std::string plain = aes_gcm_decrypt(receiver.buffer, keys.aes, keys.nonce);
+          std::cout << "[" << sender_id << "] " << plain << '\n';
+        }
+      } else if (receiver.header.type == static_cast<uint16_t>(MessageType::KEY)) {
+        // Received public key from server - store it
+        // First 4 bytes could be user_id, or we use header.sender
+        // For simplicity, use header.sender as the user_id
+        int peer_id = receiver.header.sender;
+        if (peer_id != 0 && peer_id != user_id) {
+          peer_public_keys[peer_id] = receiver.buffer;
+          std::cout << "[System] Received public key for user " << peer_id << "\n";
+        }
       }
 
       // Reset state
@@ -195,10 +234,23 @@ void Client::run() {
       }
 
       std::string line = input;
-      Message m = build_message(static_cast<uint16_t>(MessageType::CHAT), user_id, line.data(), line.size());
-      if (!send_message(client_socket, m)) {
-        std::cout << "Failed to send message" << std::endl;
-        return;
+
+      if (peer_public_keys.empty()) {
+        std::cout << "No peers connected yet\n";
+      } else {
+        // For simplicity: encrypt with first peer's key (1-to-1 E2EE)
+        // In a real group chat, you'd need to send separate encrypted copies
+        auto first_peer = peer_public_keys.begin();
+        std::vector<uint8_t> shared = ecdh_shared_secret(my_private_key, first_peer->second);
+        CryptoKeys keys = derive_aes_keys(shared);
+
+        std::vector<uint8_t> encrypted = aes_gcm_encrypt(line, keys.aes, keys.nonce);
+        Message m = build_message(static_cast<uint16_t>(MessageType::CHAT), user_id, encrypted.data(), encrypted.size());
+
+        if (!send_message(client_socket, m)) {
+          std::cout << "Failed to send message" << std::endl;
+          return;
+        }
       }
     }
   }

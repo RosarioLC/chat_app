@@ -46,16 +46,19 @@ public:
   // Inputs:
   // - `username`: unique textual identifier
   // - `password_hash`: bcrypt hash (use `bcrypt_hash()` to generate)
+  // - `pubkey`: client-generated X25519 public key (for E2EE)
   // Behavior:
-  // - Generates an X25519 keypair and stores the pub/priv as BLOBs
+  // - Stores the provided public key (client keeps private key)
   // - Inserts into `Users(username, password_hash, pubkey, privkey)`
-  void add_user(const std::string& username, const std::string& password_hash);
+  void add_user(const std::string& username, const std::string& password_hash, const std::vector<uint8_t>& pubkey = {});
 
   // Verify credentials.
   // Inputs: raw `username` and `password` (plaintext).
   // Returns: user id on success, or 0 on failure.
   // Implementation compares the provided password against the stored bcrypt hash.
   int check_user(const std::string& username, const std::string& password);
+  // Update user's public key (for session key updates)
+  void update_public_key(int user_id, const std::vector<uint8_t>& pubkey);
 
   // Remove user by id or username. No-op if the record doesn't exist.
   void remove_user(int id);

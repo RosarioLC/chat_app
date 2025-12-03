@@ -10,6 +10,7 @@
 // - Uses non-blocking sockets + polling within a single-threaded loop
 // - Minimal sleeps to reduce CPU spin; suitable for small demos/tests
 #pragma once
+#include "crypto.hpp"
 #include "database.hpp"
 #include "protocol.hpp"
 #include <string>
@@ -29,7 +30,6 @@ struct Client {
   std::vector<uint8_t> buffer = {};
   Header pending_header = {};
   bool hdr_ready = false;
-  std::vector<uint8_t> ephemeral_priv = {};
 };
 class Server {
   int server_socket;

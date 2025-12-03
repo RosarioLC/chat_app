@@ -77,7 +77,7 @@ std::vector<uint8_t> Database::fetch_public_key(int user_id) {
   return key;
 }
 
-void Database::add_user(const std::string& username, const std::string& password_hash) {
+void Database::add_user(const std::string& username, const std::string& password_hash, const std::vector<uint8_t>& pubkey) {
   auto stmt = prepare("INSERT INTO Users(username, password_hash, pubkey, privkey) VALUES (?, ?, ?, ?)");
   if (!stmt) {
     return;
@@ -85,10 +85,17 @@ void Database::add_user(const std::string& username, const std::string& password
   sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
   sqlite3_bind_text(stmt, 2, password_hash.c_str(), -1, SQLITE_STATIC);
 
-  std::vector<uint8_t> pubkey, privkey;
-  generate_ephemeral_keypair(pubkey, privkey);
+  std::vector<uint8_t> client_pubkey, privkey;
+  if (pubkey.empty()) {
+    // Fallback: server generates (NOT true E2EE)
+    generate_ephemeral_keypair(client_pubkey, privkey);
+  } else {
+    // Use client-provided public key (true E2EE - client keeps private key)
+    client_pubkey = pubkey;
+    // privkey remains empty - server never sees it
+  }
 
-  sqlite3_bind_blob(stmt, 3, pubkey.data(), pubkey.size(), SQLITE_STATIC);
+  sqlite3_bind_blob(stmt, 3, client_pubkey.data(), client_pubkey.size(), SQLITE_STATIC);
   sqlite3_bind_blob(stmt, 4, privkey.data(), privkey.size(), SQLITE_STATIC);
 
   if (sqlite3_step(stmt) != SQLITE_DONE) {
@@ -115,6 +122,21 @@ int Database::check_user(const std::string& username, const std::string& passwor
   }
   sqlite3_finalize(stmt);
   return user_id;
+}
+
+void Database::update_public_key(int user_id, const std::vector<uint8_t>& pubkey) {
+  auto stmt = prepare("UPDATE Users SET pubkey = ? WHERE id = ?");
+  if (!stmt) {
+    return;
+  }
+
+  sqlite3_bind_blob(stmt, 1, pubkey.data(), pubkey.size(), SQLITE_STATIC);
+  sqlite3_bind_int(stmt, 2, user_id);
+
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    std::cerr << "Update public key failed: " << sqlite3_errmsg(db) << std::endl;
+  }
+  sqlite3_finalize(stmt);
 }
 
 void Database::remove_user(int id) {

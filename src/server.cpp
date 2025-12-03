@@ -1,5 +1,4 @@
 #include "server.hpp"
-#include "../include/crypto.hpp"
 #include "../include/util.hpp"
 #include <algorithm>
 #include <chrono>
@@ -138,10 +137,12 @@ void Server::handle_client(Client& client) {
   Message message;
   if (assemble_frame(client, message)) {
     message.header.sender = client.user_id;
-    std::string chat_text(reinterpret_cast<char*>(message.payload.data()), message.payload.size());
-    server_log("INFO", std::string("recv from uid=") + std::to_string(client.user_id) + " fd=" + std::to_string(client.fd) + " len=" + std::to_string(message.payload.size()) + " text='" +
-                           chat_text + "'");
-    broadcast_message(message);
+
+    if (message.header.type == static_cast<uint16_t>(MessageType::CHAT)) {
+      // Blind relay - server never decrypts
+      server_log("DEBUG", std::string("relaying encrypted message from uid=") + std::to_string(client.user_id));
+      broadcast_message(message);
+    }
   }
 }
 
@@ -162,24 +163,30 @@ void Server::send_user_pubkey(int fd, int user_id) {
   key_message.payload = database->fetch_public_key(user_id);
   key_message.header.length = key_message.payload.size();
   key_message.header.type = static_cast<uint16_t>(MessageType::KEY);
-  key_message.header.sender = 0;
+  key_message.header.sender = user_id; // Set sender to identify whose key this is
   key_message.header.timestamp = static_cast<uint32_t>(time(nullptr));
-  server_log("DEBUG", std::string("sending KEY frame len=") + std::to_string(key_message.header.length) + " to fd=" + std::to_string(fd));
+  server_log("DEBUG", std::string("sending KEY frame for uid=") + std::to_string(user_id) + " len=" + std::to_string(key_message.header.length) + " to fd=" + std::to_string(fd));
   send_message(fd, key_message);
 }
 
 void Server::finish_auth(Client& client, const std::string& username, const char* action) {
   send_line(client.fd, "OK " + std::to_string(client.user_id) + "\n");
-  send_user_pubkey(client.fd, client.user_id);
 
-  std::vector<uint8_t> ep_pub, ep_priv;
-  generate_ephemeral_keypair(ep_pub, ep_priv);
+  // Send all users' public keys to the newly authenticated client
+  for (auto& other : clients) {
+    if (other.fd == -1 || other.user_id == 0)
+      continue;
+    send_user_pubkey(client.fd, other.user_id);
+  }
 
-  Message ep_frame;
-  ep_frame.header = {static_cast<uint32_t>(ep_pub.size()), static_cast<uint16_t>(MessageType::EPHEMERAL), 0, static_cast<uint32_t>(time(nullptr))};
-  ep_frame.payload = std::move(ep_pub);
-  send_message(client.fd, ep_frame);
-  client.ephemeral_priv = std::move(ep_priv);
+  // Broadcast this user's public key to all other authenticated clients
+  for (auto& other : clients) {
+    if (other.fd == -1 || other.user_id == 0 || other.user_id == client.user_id)
+      continue;
+    if (other.state == ChatState::CHATTING) {
+      send_user_pubkey(other.fd, client.user_id);
+    }
+  }
 
   fcntl(client.fd, F_SETFL, O_NONBLOCK);
   client.state = ChatState::CHATTING;
@@ -205,8 +212,24 @@ void Server::handshake_step(Client& client) {
     if (password.empty()) {
       return;
     }
-    database->add_user(username, bcrypt_hash(password));
+
+    // Expect public key as next line (hex encoded for simplicity)
+    std::string pubkey_hex = read_line(client.fd, client.buffer);
+    if (pubkey_hex.empty()) {
+      return;
+    }
+
+    // Convert hex to bytes
+    std::vector<uint8_t> pubkey;
+    pubkey_hex.erase(std::remove(pubkey_hex.begin(), pubkey_hex.end(), '\n'), pubkey_hex.end());
+    for (size_t i = 0; i < pubkey_hex.length(); i += 2) {
+      std::string byte_str = pubkey_hex.substr(i, 2);
+      pubkey.push_back(static_cast<uint8_t>(std::stoi(byte_str, nullptr, 16)));
+    }
+
+    database->add_user(username, bcrypt_hash(password), pubkey);
     client.user_id = database->fetch_user_id(username);
+    client.buffer.clear(); // Clear any leftover data
     finish_auth(client, username, "registered");
   } else if (starts_with(line, "LOGIN ")) {
     std::string username = line.substr(6, line.find('\n', 6) - 6);
@@ -218,6 +241,20 @@ void Server::handshake_step(Client& client) {
     client.user_id = database->check_user(username, password);
 
     if (client.user_id) {
+      // Receive updated public key for this session
+      std::string pubkey_hex = read_line(client.fd, client.buffer);
+      if (!pubkey_hex.empty()) {
+        // Convert hex to bytes
+        std::vector<uint8_t> pubkey;
+        pubkey_hex.erase(std::remove(pubkey_hex.begin(), pubkey_hex.end(), '\n'), pubkey_hex.end());
+        for (size_t i = 0; i < pubkey_hex.length(); i += 2) {
+          std::string byte_str = pubkey_hex.substr(i, 2);
+          pubkey.push_back(static_cast<uint8_t>(std::stoi(byte_str, nullptr, 16)));
+        }
+        // Update the public key in database
+        database->update_public_key(client.user_id, pubkey);
+        client.buffer.clear(); // Clear any leftover data
+      }
       finish_auth(client, username, "logged in");
     } else {
       send_line(client.fd, "ERR auth_fail\n");
