@@ -1,5 +1,7 @@
 #include "server.hpp"
-#include "../include/util.hpp"
+#include "logger.hpp"
+#include "net.hpp"
+#include "util.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -14,58 +16,16 @@
 #include <thread>
 #include <unistd.h>
 
-static std::string read_line(int socket, std::vector<uint8_t>& accumulator) {
-  char ch;
-  while (read_exact(socket, &ch, 1)) {
-    accumulator.push_back(static_cast<uint8_t>(ch));
-    if (ch == '\n') {
-      std::string out(accumulator.begin(), accumulator.end());
-      accumulator.clear();
-      return out;
-    }
-  }
-  return {};
-}
-
-static inline void server_log(const char* level, const std::string& msg) {
-  auto now = std::chrono::system_clock::now();
-  std::time_t t = std::chrono::system_clock::to_time_t(now);
-  std::tm tm = *std::localtime(&t);
-  std::ostringstream oss;
-  oss << std::put_time(&tm, "%F %T") << " [" << level << "] " << msg;
-  std::cout << oss.str() << std::endl;
-}
-
-static void send_line(int socket, const std::string& line) {
-  send(socket, line.data(), line.size(), MSG_NOSIGNAL);
-}
-
-static inline void send_message(int fd, const Message& m) {
-  ssize_t n1 = send(fd, &m.header, sizeof(m.header), MSG_NOSIGNAL);
-  if (n1 < 0) {
-    server_log("ERROR", std::string("send header failed fd=") + std::to_string(fd) + " err=" + std::to_string(errno));
-    return;
-  }
-  if (m.header.length && !m.payload.empty()) {
-    ssize_t n2 = send(fd, m.payload.data(), m.header.length, MSG_NOSIGNAL);
-    if (n2 < 0) {
-      server_log("ERROR", std::string("send payload failed fd=") + std::to_string(fd) + " err=" + std::to_string(errno));
-      return;
-    }
-  }
-  server_log("DEBUG", std::string("sent message type=") + std::to_string(m.header.type) + " len=" + std::to_string(m.header.length) + " to fd=" + std::to_string(fd));
-}
-
 void Server::broadcast_message(const Message& message) {
   for (auto& client : clients) {
     if (client.fd == -1)
       continue;
     if (message.header.type == static_cast<uint16_t>(MessageType::CHAT) && client.user_id == message.header.sender)
       continue;
-
-    server_log("DEBUG", std::string("broadcast: type=") + std::to_string(message.header.type) + " from=" + std::to_string(message.header.sender) + " -> fd=" + std::to_string(client.fd) +
-                            " user=" + std::to_string(client.user_id));
-    send_message(client.fd, message);
+    // Blind relay: server does not decrypt CHAT frames; it forwards as-is.
+    Logger::log(Logger::DEBUG,
+                Logger::with_conn(client.fd, client.user_id, std::string("broadcast type=") + std::to_string(message.header.type) + " from=" + std::to_string(message.header.sender)));
+    net::send_message(client.fd, message);
   }
 }
 
@@ -73,11 +33,9 @@ bool Server::assemble_frame(Client& client, Message& output) {
   output = Message{};
 
   if (!client.hdr_ready) {
-    int rc = recv_n_nb(client.fd, client.buffer, sizeof(Header));
-    if (rc == 0)
-      return false;
-    if (rc == -1) {
-      server_log("INFO", std::string("closing client fd=") + std::to_string(client.fd) + " (header read error)");
+    bool ok = net::recv_all_nb(client.fd, client.buffer, sizeof(Header));
+    if (!ok) {
+      Logger::log(Logger::INFO, Logger::with_conn(client.fd, client.user_id, "closing client (header read error)"));
       close(client.fd);
       client.fd = -1;
       return false;
@@ -85,25 +43,30 @@ bool Server::assemble_frame(Client& client, Message& output) {
 
     std::memcpy(&client.pending_header, client.buffer.data(), sizeof(Header));
     if (!validate_header(client.pending_header)) {
-      server_log("WARN", std::string("invalid header from fd=") + std::to_string(client.fd) + " type=" + std::to_string(client.pending_header.type) +
-                             " len=" + std::to_string(client.pending_header.length));
+      Logger::log(Logger::WARN, Logger::with_conn(client.fd, client.user_id,
+                                                  std::string("invalid header type=") + std::to_string(client.pending_header.type) + " len=" + std::to_string(client.pending_header.length)));
       close(client.fd);
       client.fd = -1;
       return false;
     }
-    server_log("DEBUG",
-               std::string("read header from fd=") + std::to_string(client.fd) + " type=" + std::to_string(client.pending_header.type) + " len=" + std::to_string(client.pending_header.length));
+    // Enforce maximum payload size
+    if (client.pending_header.length > MAX_PAYLOAD_SIZE) {
+      Logger::log(Logger::WARN, Logger::with_conn(client.fd, client.user_id, std::string("payload too large len=") + std::to_string(client.pending_header.length)));
+      close(client.fd);
+      client.fd = -1;
+      return false;
+    }
+    Logger::log(Logger::DEBUG, Logger::with_conn(client.fd, client.user_id,
+                                                 std::string("read header type=") + std::to_string(client.pending_header.type) + " len=" + std::to_string(client.pending_header.length)));
     client.buffer.erase(client.buffer.begin(), client.buffer.begin() + sizeof(Header));
     client.hdr_ready = true;
   }
 
   size_t payload_size = client.pending_header.length;
 
-  int rc2 = recv_n_nb(client.fd, client.buffer, payload_size);
-  if (rc2 == 0)
-    return false;
-  if (rc2 == -1) {
-    server_log("INFO", std::string("closing client fd=") + std::to_string(client.fd) + " (payload read error)");
+  bool ok2 = net::recv_all_nb(client.fd, client.buffer, payload_size);
+  if (!ok2) {
+    Logger::log(Logger::INFO, Logger::with_conn(client.fd, client.user_id, "closing client (payload read error)"));
     close(client.fd);
     client.fd = -1;
     return false;
@@ -113,7 +76,8 @@ bool Server::assemble_frame(Client& client, Message& output) {
     output.header = client.pending_header;
     output.payload = {client.buffer.begin(), client.buffer.begin() + payload_size};
 
-    server_log("DEBUG", std::string("assembled message from fd=") + std::to_string(client.fd) + " type=" + std::to_string(output.header.type) + " len=" + std::to_string(output.header.length));
+    Logger::log(Logger::DEBUG,
+                Logger::with_conn(client.fd, client.user_id, std::string("assembled message type=") + std::to_string(output.header.type) + " len=" + std::to_string(output.header.length)));
     output.valid = true;
     client.buffer.clear();
     client.hdr_ready = false;
@@ -129,7 +93,7 @@ void Server::handle_client(Client& client) {
     return;
 
   if (client.state == ChatState::HANDSHAKE) {
-    server_log("DEBUG", std::string("handshake poll fd=") + std::to_string(client.fd));
+    Logger::log(Logger::DEBUG, Logger::with_conn(client.fd, client.user_id, "handshake poll"));
     handshake_step(client);
     return;
   }
@@ -140,7 +104,7 @@ void Server::handle_client(Client& client) {
 
     if (message.header.type == static_cast<uint16_t>(MessageType::CHAT)) {
       // Blind relay - server never decrypts
-      server_log("DEBUG", std::string("relaying encrypted message from uid=") + std::to_string(client.user_id));
+      Logger::log(Logger::DEBUG, Logger::with_conn(client.fd, client.user_id, "relaying encrypted message"));
       broadcast_message(message);
     }
   }
@@ -153,7 +117,7 @@ void Server::accept_new_connections() {
     if (cli >= 0) {
       fcntl(cli, F_SETFL, O_NONBLOCK);
       clients.emplace_back(Client{cli});
-      server_log("INFO", std::string("Client connected fd=") + std::to_string(cli));
+      Logger::log(Logger::INFO, Logger::with_conn(cli, 0, "Client connected"));
     }
   }
 }
@@ -165,12 +129,13 @@ void Server::send_user_pubkey(int fd, int user_id) {
   key_message.header.type = static_cast<uint16_t>(MessageType::KEY);
   key_message.header.sender = user_id; // Set sender to identify whose key this is
   key_message.header.timestamp = static_cast<uint32_t>(time(nullptr));
-  server_log("DEBUG", std::string("sending KEY frame for uid=") + std::to_string(user_id) + " len=" + std::to_string(key_message.header.length) + " to fd=" + std::to_string(fd));
-  send_message(fd, key_message);
+  // Server distributes public keys only; clients derive shared secrets.
+  Logger::log(Logger::DEBUG, Logger::with_conn(fd, user_id, std::string("sending KEY frame len=") + std::to_string(key_message.header.length)));
+  net::send_message(fd, key_message);
 }
 
 void Server::finish_auth(Client& client, const std::string& username, const char* action) {
-  send_line(client.fd, "OK " + std::to_string(client.user_id) + "\n");
+  net::send_line(client.fd, "OK " + std::to_string(client.user_id) + "\n");
 
   // Send all users' public keys to the newly authenticated client
   for (auto& other : clients) {
@@ -191,11 +156,11 @@ void Server::finish_auth(Client& client, const std::string& username, const char
   fcntl(client.fd, F_SETFL, O_NONBLOCK);
   client.state = ChatState::CHATTING;
 
-  server_log("INFO", std::string("User ") + action + ": " + username + " id=" + std::to_string(client.user_id));
+  Logger::log(Logger::INFO, std::string("User ") + action + ": " + username + " id=" + std::to_string(client.user_id));
 }
 
 void Server::handshake_step(Client& client) {
-  std::string line = read_line(client.fd, client.buffer);
+  std::string line = net::read_line_acc(client.fd, client.buffer);
 
   if (line.empty()) {
     close(client.fd);
@@ -208,13 +173,13 @@ void Server::handshake_step(Client& client) {
 
   if (starts_with(line, "REG ")) {
     std::string username = line.substr(4, line.find('\n', 4) - 4);
-    std::string password = read_line(client.fd, client.buffer);
+    std::string password = net::read_line_acc(client.fd, client.buffer);
     if (password.empty()) {
       return;
     }
 
     // Expect public key as next line (hex encoded for simplicity)
-    std::string pubkey_hex = read_line(client.fd, client.buffer);
+    std::string pubkey_hex = net::read_line_acc(client.fd, client.buffer);
     if (pubkey_hex.empty()) {
       return;
     }
@@ -233,7 +198,7 @@ void Server::handshake_step(Client& client) {
     finish_auth(client, username, "registered");
   } else if (starts_with(line, "LOGIN ")) {
     std::string username = line.substr(6, line.find('\n', 6) - 6);
-    std::string password = read_line(client.fd, client.buffer);
+    std::string password = net::read_line_acc(client.fd, client.buffer);
 
     if (password.empty())
       return;
@@ -242,7 +207,7 @@ void Server::handshake_step(Client& client) {
 
     if (client.user_id) {
       // Receive updated public key for this session
-      std::string pubkey_hex = read_line(client.fd, client.buffer);
+      std::string pubkey_hex = net::read_line_acc(client.fd, client.buffer);
       if (!pubkey_hex.empty()) {
         // Convert hex to bytes
         std::vector<uint8_t> pubkey;
@@ -257,7 +222,7 @@ void Server::handshake_step(Client& client) {
       }
       finish_auth(client, username, "logged in");
     } else {
-      send_line(client.fd, "ERR auth_fail\n");
+      net::send_line(client.fd, "ERR auth_fail\n");
     }
   }
 }

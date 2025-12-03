@@ -6,6 +6,8 @@
 // - Switch to non-blocking I/O and process incoming/outgoing frames
 // - Display received messages tagged with the sender id
 #pragma once
+// Client module: connects to seyauth, manages E2EE crypto
+// and user input loop, decrypts incoming chats and sends encrypted ones.
 #include "crypto.hpp"
 #include <map>
 #include <unistd.h>

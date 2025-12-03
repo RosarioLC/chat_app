@@ -1,4 +1,4 @@
-#include "../include/crypto.hpp"
+#include "crypto.hpp"
 #include "../include/bcrypt/bcrypt.h"
 #include <cstring>
 #include <iomanip>
@@ -54,7 +54,7 @@ CryptoKeys derive_aes_keys(const std::vector<uint8_t>& shared_secret) {
   return keys;
 }
 
-std::vector<uint8_t> aes_gcm_encrypt(const std::string& plaintext, const uint8_t key[32], const uint8_t nonce[12]) {
+std::vector<uint8_t> aes_gcm_encrypt(const std::string& plaintext, const uint8_t key[32]) {
   // Generate random nonce for this message
   uint8_t random_nonce[12];
   RAND_bytes(random_nonce, 12);
@@ -94,7 +94,7 @@ std::vector<uint8_t> aes_gcm_encrypt(const std::string& plaintext, const uint8_t
   return result;
 }
 
-std::string aes_gcm_decrypt(const std::vector<uint8_t>& ciphertext, const uint8_t key[32], const uint8_t nonce[12]) {
+std::string aes_gcm_decrypt(const std::vector<uint8_t>& ciphertext, const uint8_t key[32]) {
   // Expected format: [12 bytes nonce][ciphertext][16 bytes tag]
   if (ciphertext.size() < 28) { // 12 + 0 + 16 minimum
     throw std::runtime_error("Ciphertext too short");

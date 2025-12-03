@@ -1,3 +1,6 @@
+#pragma once
+// Server module: accepts connections, handles authentication handshake,
+// distributes public keys, and blind-relays chat frames.
 // TCP chat server handling clients and messages
 //
 // Responsibilities:

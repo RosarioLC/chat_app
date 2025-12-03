@@ -35,20 +35,4 @@ static inline int check(int result, const char* funcname) {
 //  1  - successfully read `n` bytes (buf has >= initial+n)
 //  0  - would block / not enough data yet (no fatal error)
 // -1  - fatal error or EOF (caller should close)
-static inline int recv_n_nb(int fd, std::vector<uint8_t>& buf, size_t n) {
-  char tmp[4096];
-  while (buf.size() < n) {
-    size_t remaining = n - buf.size();
-    size_t toRead = std::min<size_t>(remaining, sizeof(tmp));
-    ssize_t r = recv(fd, tmp, toRead, 0);
-    if (r < 0) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK)
-        return 0;
-      return -1;
-    }
-    if (r == 0)
-      return -1;
-    buf.insert(buf.end(), tmp, tmp + r);
-  }
-  return 1;
-}
+// Deprecated: use net::recv_all_nb for non-blocking reads with backoff.

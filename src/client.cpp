@@ -1,5 +1,7 @@
 #include "client.hpp"
 #include "../include/crypto.hpp"
+#include "../include/logger.hpp"
+#include "../include/net.hpp"
 #include "../include/protocol.hpp"
 #include "../include/util.hpp"
 #include <cstring>
@@ -11,38 +13,24 @@
 #include <unistd.h>
 #include <vector>
 
-static void send_line(int socket, const std::string& line) {
-  send(socket, line.data(), line.size(), MSG_NOSIGNAL);
-}
+// Helper: encrypt and send chat to the first known peer (current behavior)
+static bool send_chat_to_first_peer(int client_socket, int user_id, const std::map<int, std::vector<uint8_t>>& peer_public_keys, const std::vector<uint8_t>& my_private_key,
+                                    const std::string& line) {
+  if (peer_public_keys.empty()) {
+    std::cout << "No peers connected yet\n";
+    return true; // not an error
+  }
+  auto first_peer = peer_public_keys.begin();
+  std::vector<uint8_t> shared = ecdh_shared_secret(my_private_key, first_peer->second);
+  CryptoKeys keys = derive_aes_keys(shared);
 
-static inline bool send_message(int fd, const Message& m) {
-  if (m.header.length != m.payload.size()) {
+  std::vector<uint8_t> encrypted = aes_gcm_encrypt(line, keys.aes);
+  Message m = build_message(static_cast<uint16_t>(MessageType::CHAT), user_id, encrypted.data(), encrypted.size());
+  if (!net::send_message(client_socket, m)) {
+    std::cout << "Failed to send message" << std::endl;
     return false;
-  }
-  if (!validate_header(m.header)) {
-    return false;
-  }
-  if (send(fd, &m.header, sizeof(m.header), MSG_NOSIGNAL) < 0) {
-    return false;
-  }
-  if (m.header.length) {
-    if (send(fd, m.payload.data(), m.header.length, MSG_NOSIGNAL) < 0) {
-      return false;
-    }
   }
   return true;
-}
-
-static std::string read_line(int socket) {
-  std::string line;
-  char ch;
-
-  while (read_exact(socket, &ch, 1)) {
-    line.push_back(ch);
-    if (ch == '\n')
-      return line;
-  }
-  return {};
 }
 
 /* ============================================================
@@ -87,8 +75,8 @@ int Client::authenticate() {
       std::cout << "password: ";
       std::getline(std::cin, password);
 
-      send_line(client_socket, "REG " + username + "\n");
-      send_line(client_socket, password + "\n");
+      net::send_line(client_socket, "REG " + username + "\n");
+      net::send_line(client_socket, password + "\n");
 
       // Send public key as hex
       std::string pubkey_hex;
@@ -97,15 +85,15 @@ int Client::authenticate() {
         snprintf(buf, sizeof(buf), "%02x", byte);
         pubkey_hex += buf;
       }
-      send_line(client_socket, pubkey_hex + "\n");
+      net::send_line(client_socket, pubkey_hex + "\n");
     } else if (starts_with(command, "/login ")) {
       username = command.substr(7);
 
       std::cout << "password: ";
       std::getline(std::cin, password);
 
-      send_line(client_socket, "LOGIN " + username + "\n");
-      send_line(client_socket, password + "\n");
+      net::send_line(client_socket, "LOGIN " + username + "\n");
+      net::send_line(client_socket, password + "\n");
 
       // Send current session's public key
       std::string pubkey_hex;
@@ -114,13 +102,13 @@ int Client::authenticate() {
         snprintf(buf, sizeof(buf), "%02x", byte);
         pubkey_hex += buf;
       }
-      send_line(client_socket, pubkey_hex + "\n");
+      net::send_line(client_socket, pubkey_hex + "\n");
     } else {
       std::cout << "Unknown command\n";
       continue;
     }
 
-    std::string reply = read_line(client_socket);
+    std::string reply = net::read_line(client_socket);
     if (reply.empty()) {
       std::cout << "Server closed\n";
       return 0;
@@ -170,10 +158,8 @@ void Client::run() {
         receiver.buffer.clear();
         receiver.buffer.reserve(sizeof(Header));
 
-        int rc = recv_n_nb(client_socket, receiver.buffer, sizeof(Header));
-        if (rc == 0)
-          continue;
-        if (rc == -1) {
+        bool ok = net::recv_all_nb(client_socket, receiver.buffer, sizeof(Header));
+        if (!ok) {
           std::cout << "Failed to read header from socket" << std::endl;
           return;
         }
@@ -186,10 +172,8 @@ void Client::run() {
       }
 
       // Step 2: Payload
-      int rc2 = recv_n_nb(client_socket, receiver.buffer, receiver.header.length);
-      if (rc2 == 0)
-        continue;
-      if (rc2 == -1) {
+      bool ok2 = net::recv_all_nb(client_socket, receiver.buffer, receiver.header.length);
+      if (!ok2) {
         std::cout << "Failed to read payload from socket" << std::endl;
         return;
       }
@@ -207,8 +191,8 @@ void Client::run() {
           std::vector<uint8_t> shared = ecdh_shared_secret(my_private_key, it->second);
           CryptoKeys keys = derive_aes_keys(shared);
 
-          std::string plain = aes_gcm_decrypt(receiver.buffer, keys.aes, keys.nonce);
-          std::cout << "[" << sender_id << "] " << plain << '\n';
+          std::string plain = aes_gcm_decrypt(receiver.buffer, keys.aes);
+          std::cout << "[" << sender_id << "] " << plain;
         }
       } else if (receiver.header.type == static_cast<uint16_t>(MessageType::KEY)) {
         // Received public key from server - store it
@@ -234,23 +218,8 @@ void Client::run() {
       }
 
       std::string line = input;
-
-      if (peer_public_keys.empty()) {
-        std::cout << "No peers connected yet\n";
-      } else {
-        // For simplicity: encrypt with first peer's key (1-to-1 E2EE)
-        // In a real group chat, you'd need to send separate encrypted copies
-        auto first_peer = peer_public_keys.begin();
-        std::vector<uint8_t> shared = ecdh_shared_secret(my_private_key, first_peer->second);
-        CryptoKeys keys = derive_aes_keys(shared);
-
-        std::vector<uint8_t> encrypted = aes_gcm_encrypt(line, keys.aes, keys.nonce);
-        Message m = build_message(static_cast<uint16_t>(MessageType::CHAT), user_id, encrypted.data(), encrypted.size());
-
-        if (!send_message(client_socket, m)) {
-          std::cout << "Failed to send message" << std::endl;
-          return;
-        }
+      if (!send_chat_to_first_peer(client_socket, user_id, peer_public_keys, my_private_key, line)) {
+        return;
       }
     }
   }

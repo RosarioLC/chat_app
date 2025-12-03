@@ -1,10 +1,8 @@
-// Message protocol structures and helpers
-//
-// Overview:
-// - Defines the wire format for chat messages exchanged between client/server
-// - Header is a packed 12 bytes with payload length, type, sender, timestamp
-// - `build_frame()` assembles a binary frame (header + payload)
-// - `read_exact()` ensures robust socket reads of fixed-size segments
+// Protocol module: message structures and helpers.
+// - Defines the wire format for chat messages exchanged between client/server.
+// - Header is a packed 12 bytes: length, type, sender, timestamp.
+// - `build_frame()` assembles a binary frame (header + payload).
+// - `read_exact()` ensures robust socket reads of fixed-size segments.
 #ifndef PROTOCOL_HPP
 #define PROTOCOL_HPP
 #include <cstdint>
@@ -21,14 +19,15 @@
 // CHAT: textual user messages
 // KEY: binary public key frame after auth
 // MAX_TYPE: sentinel (keep last)
-enum class MessageType : uint8_t { CHAT = 1, KEY = 2, EPHEMERAL = 3, MAX_TYPE };
+// Supported message types on the wire.
+enum class MessageType : uint8_t { CHAT = 1, KEY = 2, MAX_TYPE };
 
-// Packed 12-byte header layout.
+// Packed 12-byte header layout. Wire format is little-endian.
 // Fields:
-// - `length`: payload size in bytes
-// - `type`: value from `MessageType` (channel)
-// - `sender`: numeric user id (server stamps this)
-// - `timestamp`: epoch seconds
+// - `length`   (u32): payload size in bytes
+// - `type`     (u16): value from `MessageType` (channel)
+// - `sender`   (u16): numeric user id (server stamps this)
+// - `timestamp`(u32): epoch seconds
 #pragma pack(push, 1)
 struct Header {
   uint32_t length;
@@ -52,7 +51,6 @@ struct Message {
 // - `sender`: user id
 // - `payload` and `pay_len`: raw bytes and length
 // Returns: binary buffer ready to send via `send()`.
-std::vector<uint8_t> build_frame(uint16_t type, uint16_t sender, const void* payload, uint32_t pay_len);
 inline Message build_message(uint16_t type, uint16_t sender, const void* payload, uint32_t pay_len) {
   Message m;
   m.header.length = pay_len;
