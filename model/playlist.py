@@ -1,7 +1,6 @@
 """Playlist model containing a sequence of tracks."""
 
 from model.track import Track
-from errors.exceptions import InvalidMusicCollectionException
 from typing import Iterator
 
 
@@ -150,5 +149,5 @@ class Playlist():
             InvalidMusicCollectionException: If track is None or not found.
         """
         if track is None or track not in self._songs:
-            raise InvalidMusicCollectionException("Track is not in the playlist")
+            raise ValueError("Track is not in the playlist")
         return self._songs.index(track)
