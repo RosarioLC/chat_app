@@ -66,7 +66,7 @@ class LibraryScreen(Screen):
 
     def action_new_playlist(self) -> None:
         """Show the new playlist dialog."""
-        self.app.push_screen(NewPlaylistScreen())
+        self.call_after_refresh(lambda: self.app.push_screen(NewPlaylistScreen()))
 
     def on_mount_new_playlist(self, message: NewPlaylistScreen) -> None:
         """Handle the new playlist modal result."""

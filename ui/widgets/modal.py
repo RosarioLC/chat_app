@@ -44,6 +44,10 @@ class NewPlaylistScreen(ModalScreen):
 
     def on_mount(self) -> None:
         """Focus the input field."""
+        self.call_after_refresh(self._focus_input)
+
+    def _focus_input(self) -> None:
+        """Focus the input field after DOM is ready."""
         self.query_one("#playlist-name-input", Input).focus()
 
 

@@ -446,6 +446,7 @@ Button {
     width: 100%;
     layout: horizontal;
     content-align: center middle;
+    margin-top: 1;
 }
 
 #empty-message {
@@ -454,14 +455,18 @@ Button {
     content-align: center middle;
 }
 
-#playlist-name-input {
+Input#playlist-name-input {
     width: 100%;
     height: 3;
+    margin-top: 1;
     background: #242424;
     border: round #535353;
     color: #ffffff;
+    padding: 0 1;
 }
 
-#playlist-name-input:focus {
+Input#playlist-name-input:focus {
     border: round #1ed760;
+    color: #ffffff;
+    selection-background: #3a3a3a;
 }
