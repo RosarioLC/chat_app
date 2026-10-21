@@ -15,20 +15,19 @@ class NewPlaylistScreen(ModalScreen):
 
     CSS = """
     #new-playlist-container {
-        background: $surface;
-        border: solid $primary;
+        background: #181818;
+        border: solid #1ed760;
         width: 50;
         height: auto;
         padding: 1 2;
         margin: 1;
         layout: vertical;
         align: center middle;
-        dock: top;
     }
 
     #new-playlist-title {
         text-style: bold;
-        color: $text;
+        color: #ffffff;
         height: 3;
         content-align: center middle;
     }
@@ -38,8 +37,15 @@ class NewPlaylistScreen(ModalScreen):
         margin-top: 1;
         padding: 0 1;
         height: 3;
-        color: $text;
-        background: $surface;
+        color: #ffffff;
+        background: #242424;
+        border: round #535353;
+        border-color: #535353;
+    }
+
+    #new-playlist-input:focus {
+        border: round #1ed760;
+        border-color: #1ed760;
     }
 
     #new-playlist-buttons {
@@ -91,7 +97,7 @@ class NewPlaylistScreen(ModalScreen):
         input_widget = self.query_one("#new-playlist-input", Input)
         input_widget.focus()
 
-    def on_key(self, event: event.Key) -> None:
+    def on_key(self, event) -> None:
         """Handle Enter key to submit."""
         if event.key == "enter":
             self.on_button_pressed(
