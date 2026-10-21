@@ -423,3 +423,45 @@ Label {
 Button {
     text-style: bold;
 }
+
+#modal-dialog {
+    layout: vertical;
+    background: #1e1e1e;
+    border: solid #1ed760;
+    padding: 2 4;
+    width: 60;
+    height: auto;
+    align: center middle;
+}
+
+#modal-title {
+    height: 3;
+    color: #ffffff;
+    text-style: bold;
+    content-align: center middle;
+}
+
+#modal-buttons {
+    dock: bottom;
+    width: 100%;
+    layout: horizontal;
+    content-align: center middle;
+}
+
+#empty-message {
+    height: 3;
+    color: #a0a0a0;
+    content-align: center middle;
+}
+
+#playlist-name-input {
+    width: 100%;
+    height: 3;
+    background: #242424;
+    border: round #535353;
+    color: #ffffff;
+}
+
+#playlist-name-input:focus {
+    border: round #1ed760;
+}

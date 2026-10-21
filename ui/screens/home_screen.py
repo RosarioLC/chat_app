@@ -1,6 +1,7 @@
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.screen import Screen
-from textual.widgets import Footer, Input, Label
+from textual.widgets import DataTable, Footer, Input, Label
 from textual.worker import Worker, WorkerState
 from functools import partial
 
@@ -8,11 +9,16 @@ from ui.widgets.now_playing_bar import NowPlayingBar
 from ui.widgets.search_bar import SearchBar
 from ui.widgets.search_result import SearchResults
 from ui.widgets.next_track_card import NextTrackCard
+from ui.widgets.modal import PlaylistPickerScreen
 from model.track import Track
 
 
 class HomeScreen(Screen):
     """Home screen showing recommended tracks and the now-playing bar."""
+
+    BINDINGS = [
+        Binding("a", "add_to_playlist", "Add to Playlist"),
+    ]
 
     # Number of tracks to load per page.
     _PAGE_SIZE: int = 12
@@ -100,3 +106,39 @@ class HomeScreen(Screen):
         """Navigate to the search screen when the user submits a query."""
         setattr(self.app, "_pending_search_query", event.value.strip())
         await self.app.run_action("go_search")
+
+    def action_add_to_playlist(self) -> None:
+        """Show the playlist picker for the currently playing track."""
+        current = self._player.current_track
+        if current is None:
+            self.notify("Nothing is playing", severity="warning")
+            return
+        playlists = getattr(self._player._app, "_playlists", None)
+        if playlists is None:
+            self.notify("Playlist store not available", severity="error")
+            return
+        playlists_list = playlists.list()
+        if not playlists_list:
+            self.notify("Create a playlist first (go to Library → N)", severity="warning")
+            return
+        self.app.push_screen(PlaylistPickerScreen(playlists_list))
+
+    def on_mount_playlist_picker(self, message: PlaylistPickerScreen) -> None:
+        """Handle the playlist picker result."""
+        playlist_id = message.result
+        if playlist_id is None:
+            return
+        current = self._player.current_track
+        if current is None:
+            return
+        try:
+            playlists = getattr(self._player._app, "_playlists").list()
+            for p in playlists:
+                if p.id == playlist_id:
+                    p.add_song(current)
+                    self.notify(f'Added to "{p.name}"')
+                    break
+        except ValueError as exc:
+            self.notify(str(exc), severity="error")
+        except Exception as exc:
+            self.notify(str(exc), severity="error")
