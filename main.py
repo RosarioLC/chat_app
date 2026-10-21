@@ -2,7 +2,6 @@ import sys
 import sys; sys.stdout.reconfigure(line_buffering=True)
 from ui.app import MusicTUI
 
-print("App starting...", flush=True)
 try:
     app = MusicTUI()
     app.run()

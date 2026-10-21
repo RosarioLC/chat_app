@@ -5,26 +5,25 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
-from textual.events import Key
-from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Input, Label, Static
+from textual.containers import Container, Horizontal, Vertical
+from textual.screen import Screen, ModalScreen
+from textual.widgets import Button, Footer, Input, Label, Static, Overlay
 
 
 class NewPlaylistScreen(ModalScreen):
     """Modal dialog for creating a new playlist."""
 
     CSS = """
-    #new-playlist-modal {
-        background: #1e1e1e;
-        border: solid #1ed760;
+    #new-playlist-container {
+        background: $surface;
+        border: solid $primary;
         width: 50;
         height: auto;
         padding: 1 2;
         margin: 1;
         layout: vertical;
         align: center middle;
-        background: $panel;
+        dock: top;
     }
 
     #new-playlist-title {
@@ -38,6 +37,9 @@ class NewPlaylistScreen(ModalScreen):
         width: 100%;
         margin-top: 1;
         padding: 0 1;
+        height: 3;
+        color: $text;
+        background: $surface;
     }
 
     #new-playlist-buttons {
@@ -50,10 +52,6 @@ class NewPlaylistScreen(ModalScreen):
     #new-playlist-buttons Button {
         width: 50%;
     }
-
-    Footer {
-        dock: bottom;
-    }
     """
 
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
@@ -65,13 +63,12 @@ class NewPlaylistScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         """Compose the dialog layout."""
-        with Vertical(id="new-playlist-modal"):
+        with Container(id="new-playlist-container"):
             yield Label("Enter playlist name:", id="new-playlist-title")
             yield Input(placeholder="My Playlist", id="new-playlist-input")
             with Horizontal(id="new-playlist-buttons"):
                 yield Button("Create", variant="primary", id="create-button")
                 yield Button("Cancel", variant="default", id="cancel-button")
-        yield Footer()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
@@ -87,23 +84,18 @@ class NewPlaylistScreen(ModalScreen):
 
     def on_mount(self) -> None:
         """Focus the input field."""
-        self.call_after_refresh(self._focus_input)
+        self.call_later(self._focus_input)
 
     def _focus_input(self) -> None:
         """Focus the input field after DOM is ready."""
-        self.query_one("#new-playlist-input", Input).focus()
+        input_widget = self.query_one("#new-playlist-input", Input)
+        input_widget.focus()
 
-    def on_key(self, event: Key) -> None:
+    def on_key(self, event: event.Key) -> None:
         """Handle Enter key to submit."""
         if event.key == "enter":
             self.on_button_pressed(
-                Button.Pressed(
-                    Button(
-                        "Create",
-                        variant="primary",
-                        id="create-button",
-                    )
-                )
+                Button.Pressed(self.query_one("#create-button", Button))
             )
 
 
@@ -111,16 +103,16 @@ class PlaylistPickerScreen(ModalScreen):
     """Modal dialog for choosing which playlist to add a track to."""
 
     CSS = """
-    #playlist-picker-modal {
-        background: #1e1e1e;
-        border: solid #1ed760;
+    #playlist-picker-container {
+        background: $surface;
+        border: solid $primary;
         width: 50;
         height: auto;
         padding: 1 2;
         margin: 1;
         layout: vertical;
         align: center middle;
-        background: $panel;
+        dock: top;
     }
 
     #playlist-picker-title {
@@ -141,8 +133,10 @@ class PlaylistPickerScreen(ModalScreen):
         width: 50%;
     }
 
-    Footer {
-        dock: bottom;
+    #empty-message {
+        height: 3;
+        color: $text-muted;
+        content-align: center middle;
     }
     """
 
@@ -160,7 +154,7 @@ class PlaylistPickerScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         """Compose the picker layout."""
-        with Vertical(id="playlist-picker-modal"):
+        with Container(id="playlist-picker-container"):
             yield Label("Add to playlist:", id="playlist-picker-title")
             if self._playlists:
                 for playlist in self._playlists:
@@ -173,7 +167,6 @@ class PlaylistPickerScreen(ModalScreen):
                 yield Static("No playlists yet.", id="empty-message")
             with Horizontal(id="playlist-picker-buttons"):
                 yield Button("Cancel", variant="default", id="cancel-button")
-        yield Footer()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
