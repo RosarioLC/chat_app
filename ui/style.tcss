@@ -424,48 +424,6 @@ Button {
     text-style: bold;
 }
 
-#modal-dialog {
-    layout: vertical;
-    background: #1e1e1e;
-    border: solid #1ed760;
-    padding: 2 4;
-    width: 60;
-    height: auto;
-    align: center middle;
-}
-
-#modal-title {
-    height: 3;
-    color: #ffffff;
+Button {
     text-style: bold;
-    content-align: center middle;
-}
-
-#modal-buttons {
-    dock: bottom;
-    width: 100%;
-    layout: horizontal;
-    content-align: center middle;
-    margin-top: 1;
-}
-
-#empty-message {
-    height: 3;
-    color: #a0a0a0;
-    content-align: center middle;
-}
-
-Input#playlist-name-input {
-    width: 100%;
-    height: 3;
-    margin-top: 1;
-    background: #242424;
-    border: round #535353;
-    color: #ffffff;
-    padding: 0 1;
-}
-
-Input#playlist-name-input:focus {
-    border: round #1ed760;
-    color: #ffffff;
 }
