@@ -468,5 +468,4 @@ Input#playlist-name-input {
 Input#playlist-name-input:focus {
     border: round #1ed760;
     color: #ffffff;
-    selection-background: #3a3a3a;
 }
