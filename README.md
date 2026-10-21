@@ -26,7 +26,7 @@ A terminal-based music player built with [Textual](https://textual.textualize.io
 - **📜 Synchronized lyrics** — Fetches lyrics via YouTube Music and the `syncedlyrics` library, with timestamp-based highlighting as the song plays
 - **🎨 Terminal-rendered album art** — Uses NumPy and Pillow to downscale images to ANSI half-block colour characters, rendered in real-time
 - **♾️ Infinite scroll** — Edge-triggered lazy loading on all result tables — loads more tracks only when the user scrolls within 5 rows of the bottom
-- **📋 Playlist management** — Create, rename, and delete playlists backed by a SQLite database
+- **📋 Playlist management** — Create new playlists (N), add currently playing track to a playlist (A), remove tracks (D), and delete playlists
 - **🔀 Smart queue** — Skip, shuffle, history-aware back navigation, and repeat modes (OFF / ALL / ONE)
 - **🖥️ Fullscreen album art** — Press `F` to enter fullscreen mode with the album art rendered at full terminal resolution
 - **⚡ Background workers** — Artwork rendering, stream resolution, and lyrics fetching all happen in threaded workers with generation-based cancellation to avoid race conditions
@@ -61,8 +61,8 @@ music/
     ├── screens/
     │   ├── home_screen.py           # Recommendations + infinite scroll
     │   ├── search_screen.py         # Search with deduplication
-    │   ├── library_screen.py        # Browse by artist/album
-    │   ├── playlist_screen.py       # Playlist CRUD
+    │   ├── library_screen.py        # Playlist management (create/delete/add)
+    │   ├── playlist_screen.py       # View, play, and manage playlist tracks
     │   ├── lyrics_screen.py         # Synchronized lyrics display
     │   └── fullscreen_screen.py     # Fullscreen album art overlay
     └── widgets/
@@ -76,7 +76,8 @@ music/
         ├── volume_control.py        # Volume slider
         ├── track_progress.py        # Seekable progress bar
         ├── action_hints.py          # Keyboard shortcut hints
-        └── sidebar.py               # Navigation sidebar
+        ├── sidebar.py               # Navigation sidebar
+        └── modal.py                 # Playlist creation & picker dialogs
 ```
 
 ## Tech Stack
@@ -113,15 +114,18 @@ python -m main
 
 ## Keyboard Shortcuts
 
-| Key | Action |
-|---|---|
-| `H` | Go to Home (recommendations) |
-| `S` | Go to Search |
-| `L` | Go to Library |
-| `F` | Toggle fullscreen album art |
-| `Q` | Quit |
-| `Up/Down` | Navigate track list |
-| `Enter` | Play selected track |
+| Key | Screen | Action |
+|---|---|---|
+| `H` | Any | Go to Home (recommendations) |
+| `S` | Any | Go to Search |
+| `L` | Any | Go to Library |
+| `F` | Any | Toggle fullscreen album art |
+| `Q` | Any | Quit |
+| `A` | Home / Search | Add currently playing track to a playlist |
+| `N` | Library | Create a new playlist |
+| `D` | Library / Playlist | Delete playlist / Remove track from playlist |
+| `Up/Down` | Results tables | Navigate track list |
+| `Enter` | Results tables | Play selected track |
 
 ## What's Next
 
