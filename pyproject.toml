@@ -1,0 +1,16 @@
+[project]
+name = "music"
+version = "0.1.0"
+dependencies = [
+    "textual>=0.40,<1.0",
+    "python-vlc",
+    "numpy",
+    "Pillow",
+    "ytmusicapi",
+    "syncedlyrics",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
